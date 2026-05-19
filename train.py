@@ -136,7 +136,7 @@ def run_hyperparameter_tuning(train_loader, test_loader):
     
     print(f"\nBEST PARAMETERS FOUND: LR={best_params['lr']}, Weight Decay={best_params['wd']} (Acc: {best_acc:.4f})")
     print("="*50)
-    return best_params
+    return best_params, tuning_results
 
 
 def run_ablation_studies():
@@ -159,7 +159,7 @@ def run_ablation_studies():
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
     
     # Run Hyperparameter Tuning First
-    best_params = run_hyperparameter_tuning(train_loader, test_loader)
+    best_params, tuning_results = run_hyperparameter_tuning(train_loader, test_loader)
     best_lr = best_params['lr']
     best_wd = best_params['wd']
 
@@ -200,6 +200,25 @@ def run_ablation_studies():
     for exp_name, metrics in results.items():
         print(f"{exp_name:40} | Accuracy: {metrics['Accuracy']:.4f} | F1-Score: {metrics['F1-Score']:.4f}")
     print("="*50)
+
+    # Otomatik Markdown Raporu Oluşturma (Auto Markdown Generation)
+    with open("training_results.md", "w", encoding="utf-8") as f:
+        f.write("# Training and Ablation Study Results\n\n")
+        
+        f.write("## 1. Hyperparameter Tuning Phase\n\n")
+        f.write("| Learning Rate | Weight Decay | Val Accuracy | Val F1-Score |\n")
+        f.write("| :--- | :--- | :--- | :--- |\n")
+        for res in tuning_results:
+            f.write(f"| {res['lr']} | {res['wd']} | {res['acc']:.4f} | {res['f1']:.4f} |\n")
+        f.write(f"\n**Best Parameters Selected:** LR = {best_lr}, Weight Decay = {best_wd}\n\n")
+        
+        f.write("## 2. Ablation Study Results (Main Training)\n\n")
+        f.write("| Experiment | Configuration | Accuracy | F1-Score |\n")
+        f.write("| :--- | :--- | :--- | :--- |\n")
+        for exp_name, metrics in results.items():
+            f.write(f"| **{exp_name.split('.')[0]}** | {exp_name.split('.')[1].strip()} | `{metrics['Accuracy']:.4f}` | `{metrics['F1-Score']:.4f}` |\n")
+            
+    print("\n[SUCCESS] Results have been automatically saved to training_results.md")
 
 if __name__ == "__main__":
     run_ablation_studies()
