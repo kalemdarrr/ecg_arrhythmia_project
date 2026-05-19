@@ -4,6 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 from sklearn.metrics import classification_report, accuracy_score, f1_score
+import optuna
 from models import ECGModel, DenoisingAutoencoder
 from data_loader import prepare_data
 
@@ -96,48 +97,6 @@ def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, weight_de
         
     return acc, f1, all_targets, all_preds
 
-def run_hyperparameter_tuning(train_loader, test_loader):
-    """
-    Grid search for Hyperparameter Tuning.
-    """
-    print("\n" + "="*50)
-    print("HYPERPARAMETER TUNING PHASE (Grid Search)")
-    print("="*50)
-    
-    # Smaller grid for demonstration and faster execution
-    learning_rates = [0.005, 0.001, 0.0005]
-    weight_decays = [1e-4, 1e-5]
-    best_acc = 0
-    best_params = {'lr': 0.001, 'wd': 1e-5} # Default fallback
-    
-    tuning_results = []
-    
-    # Using a simpler model (CNN) for faster tuning to save time
-    for lr in learning_rates:
-        for wd in weight_decays:
-            print(f"\nTesting Hyperparameters -> LR: {lr}, Weight Decay: {wd}")
-            # Use basic CNN for fast hyperparameter evaluation
-            model = ECGModel(num_classes=5, use_ae=False, use_gru=False, use_attention=False)
-            
-            # Train for only 3 epochs
-            acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=3, lr=lr, weight_decay=wd)
-            
-            tuning_results.append({'lr': lr, 'wd': wd, 'acc': acc, 'f1': f1})
-            
-            if acc > best_acc:
-                best_acc = acc
-                best_params = {'lr': lr, 'wd': wd}
-                
-    print("\n" + "="*50)
-    print("HYPERPARAMETER TUNING RESULTS")
-    print("="*50)
-    for res in tuning_results:
-        print(f"LR: {res['lr']} | Weight Decay: {res['wd']} | Val Acc: {res['acc']:.4f} | Val F1: {res['f1']:.4f}")
-    
-    print(f"\nBEST PARAMETERS FOUND: LR={best_params['lr']}, Weight Decay={best_params['wd']} (Acc: {best_acc:.4f})")
-    print("="*50)
-    return best_params, tuning_results
-
 
 def run_ablation_studies():
     print("\nLoading and Preparing Data...")
@@ -158,11 +117,6 @@ def run_ablation_studies():
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
     
-    # Run Hyperparameter Tuning First
-    best_params, tuning_results = run_hyperparameter_tuning(train_loader, test_loader)
-    best_lr = best_params['lr']
-    best_wd = best_params['wd']
-
     # 4 Phase Ablation Study Configurations
     experiments = {
         "1. CNN Only": {"use_ae": False, "use_gru": False, "use_attention": False},
@@ -172,24 +126,51 @@ def run_ablation_studies():
     }
     
     results = {}
+    tuning_results_per_exp = {}
     
-    pretrained_ae = None
+    # Pre-train Autoencoder once globally so it can be reused across Optuna trials
+    print("\nPre-training Autoencoder globally for models that require it...")
+    pretrained_ae = DenoisingAutoencoder()
+    pretrained_ae = train_autoencoder(pretrained_ae, train_loader, epochs=10) 
     
     for exp_name, flags in experiments.items():
         print(f"\n{'='*50}\nEXPERIMENT STARTED: {exp_name}\n{'='*50}")
         
-        # Model creation
-        model = ECGModel(num_classes=5, **flags)
+        print(f"\n--- Starting Optuna Tuning for {exp_name} ---")
+        def objective(trial):
+            # Bayesian Optimization search space
+            lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+            wd = trial.suggest_float("weight_decay", 1e-6, 1e-3, log=True)
+            
+            model = ECGModel(num_classes=5, **flags)
+            if flags["use_ae"]:
+                model.ae.load_state_dict(pretrained_ae.state_dict())
+                
+            # Quick evaluation (3 epochs) to test hyperparameter effectiveness
+            acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=3, lr=lr, weight_decay=wd)
+            return acc
+            
+        optuna.logging.set_verbosity(optuna.logging.WARNING) # Keep logs clean
+        study = optuna.create_study(direction="maximize")
+        study.optimize(objective, n_trials=5) # n_trials=5 as discussed
         
-        # Pre-train if AE is going to be used
+        best_lr = study.best_params["lr"]
+        best_wd = study.best_params["weight_decay"]
+        print(f"Optuna Best Params for {exp_name} -> LR: {best_lr:.6f}, Weight Decay: {best_wd:.6f} (Val Acc: {study.best_value:.4f})")
+        
+        tuning_results_per_exp[exp_name] = {
+            "best_lr": best_lr,
+            "best_wd": best_wd,
+            "best_acc": study.best_value
+        }
+        
+        print(f"\n--- Starting Main Training for {exp_name} with Best Params ---")
+        # Final Model creation for this experiment
+        model = ECGModel(num_classes=5, **flags)
         if flags["use_ae"]:
-            if pretrained_ae is None:
-                pretrained_ae = DenoisingAutoencoder()
-                # AE Training increased to 10 epochs for Colab
-                pretrained_ae = train_autoencoder(pretrained_ae, train_loader, epochs=10) 
             model.ae.load_state_dict(pretrained_ae.state_dict())
             
-        # Model Training (Using the best parameters from Tuning Phase)
+        # Model Training (20 epochs) with best params
         acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=20, lr=best_lr, weight_decay=best_wd) 
         
         results[exp_name] = {"Accuracy": acc, "F1-Score": f1}
@@ -205,14 +186,13 @@ def run_ablation_studies():
     with open("training_results.md", "w", encoding="utf-8") as f:
         f.write("# Training and Ablation Study Results\n\n")
         
-        f.write("## 1. Hyperparameter Tuning Phase\n\n")
-        f.write("| Learning Rate | Weight Decay | Val Accuracy | Val F1-Score |\n")
+        f.write("## 1. Optuna Hyperparameter Tuning Phase (Independent per Model)\n\n")
+        f.write("| Experiment | Best LR | Best Weight Decay | Best Val Accuracy (3 Epochs) |\n")
         f.write("| :--- | :--- | :--- | :--- |\n")
-        for res in tuning_results:
-            f.write(f"| {res['lr']} | {res['wd']} | {res['acc']:.4f} | {res['f1']:.4f} |\n")
-        f.write(f"\n**Best Parameters Selected:** LR = {best_lr}, Weight Decay = {best_wd}\n\n")
+        for exp_name, data in tuning_results_per_exp.items():
+            f.write(f"| **{exp_name.split('.')[0]}** | `{data['best_lr']:.6f}` | `{data['best_wd']:.6f}` | `{data['best_acc']:.4f}` |\n")
         
-        f.write("## 2. Ablation Study Results (Main Training)\n\n")
+        f.write("\n## 2. Ablation Study Results (Main Training - 20 Epochs)\n\n")
         f.write("| Experiment | Configuration | Accuracy | F1-Score |\n")
         f.write("| :--- | :--- | :--- | :--- |\n")
         for exp_name, metrics in results.items():
