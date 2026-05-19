@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 from sklearn.metrics import classification_report, accuracy_score, f1_score
 import optuna
+import copy
 from models import ECGModel, DenoisingAutoencoder
 from data_loader import prepare_data
 
@@ -45,15 +46,23 @@ def train_autoencoder(model, train_loader, epochs=5, lr=0.001):
     print("--- Autoencoder Training Completed ---")
     return model
 
-def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, weight_decay=1e-5):
+def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, weight_decay=1e-5, patience=3):
     """
-    Trains the classifier model.
+    Trains the classifier model with Early Stopping mechanism.
     """
     criterion = nn.CrossEntropyLoss()
-    # Weight decay (L2 Reg) added to reduce overfitting
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     
     model.to(device)
+    
+    # --- Early Stopping Variables ---
+    best_loss = float('inf')
+    epochs_no_improve = 0
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
+    best_f1 = 0.0
+    best_targets = []
+    best_preds = []
     
     for epoch in range(epochs):
         model.train()
@@ -87,15 +96,35 @@ def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, weight_de
                 all_preds.extend(preds.cpu().numpy())
                 all_targets.extend(y_batch.cpu().numpy())
                 
+        avg_train_loss = train_loss / len(train_loader)
+        avg_test_loss = test_loss / len(test_loader)
         acc = accuracy_score(all_targets, all_preds)
         f1 = f1_score(all_targets, all_preds, average='weighted')
         
         print(f"Epoch [{epoch+1}/{epochs}] | "
-              f"Train Loss: {train_loss/len(train_loader):.4f} | "
-              f"Test Loss: {test_loss/len(test_loader):.4f} | "
+              f"Train Loss: {avg_train_loss:.4f} | "
+              f"Test Loss: {avg_test_loss:.4f} | "
               f"Test Acc: {acc:.4f} | F1: {f1:.4f}")
-        
-    return acc, f1, all_targets, all_preds
+              
+        # --- Early Stopping Logic ---
+        if avg_test_loss < best_loss:
+            best_loss = avg_test_loss
+            epochs_no_improve = 0
+            best_model_wts = copy.deepcopy(model.state_dict()) # Save the best model weights
+            best_acc = acc
+            best_f1 = f1
+            best_targets = all_targets
+            best_preds = all_preds
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"\n[!] Early stopping triggered! The model did not improve for {patience} epochs.")
+                print("Restoring the best weights...\n")
+                break
+                
+    # Restore best model weights when loop ends or early stopping triggers
+    model.load_state_dict(best_model_wts)
+    return best_acc, best_f1, best_targets, best_preds
 
 
 def run_ablation_studies():
@@ -146,8 +175,8 @@ def run_ablation_studies():
             if flags["use_ae"]:
                 model.ae.load_state_dict(pretrained_ae.state_dict())
                 
-            # Quick evaluation (3 epochs) to test hyperparameter effectiveness
-            acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=3, lr=lr, weight_decay=wd)
+            # Patience can be set to 2 during the Optuna phase (for fast tuning)
+            acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=3, lr=lr, weight_decay=wd, patience=2)
             return acc
             
         optuna.logging.set_verbosity(optuna.logging.WARNING) # Keep logs clean
@@ -170,8 +199,8 @@ def run_ablation_studies():
         if flags["use_ae"]:
             model.ae.load_state_dict(pretrained_ae.state_dict())
             
-        # Model Training (20 epochs) with best params
-        acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=20, lr=best_lr, weight_decay=best_wd) 
+        # Model Training (20 epochs) with best params and Early Stopping (Patience=4)
+        acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=20, lr=best_lr, weight_decay=best_wd, patience=4) 
         
         results[exp_name] = {"Accuracy": acc, "F1-Score": f1}
         
@@ -182,7 +211,7 @@ def run_ablation_studies():
         print(f"{exp_name:40} | Accuracy: {metrics['Accuracy']:.4f} | F1-Score: {metrics['F1-Score']:.4f}")
     print("="*50)
 
-    # Otomatik Markdown Raporu Oluşturma (Auto Markdown Generation)
+    # Automated Markdown Report Generation
     with open("training_results.md", "w", encoding="utf-8") as f:
         f.write("# Training and Ablation Study Results\n\n")
         
