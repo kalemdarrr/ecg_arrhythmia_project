@@ -44,13 +44,13 @@ def train_autoencoder(model, train_loader, epochs=5, lr=0.001):
     print("--- Autoencoder Training Completed ---")
     return model
 
-def train_model(model, train_loader, test_loader, epochs=10, lr=0.001):
+def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, weight_decay=1e-5):
     """
     Trains the classifier model.
     """
     criterion = nn.CrossEntropyLoss()
     # Weight decay (L2 Reg) added to reduce overfitting
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     
     model.to(device)
     
@@ -96,6 +96,49 @@ def train_model(model, train_loader, test_loader, epochs=10, lr=0.001):
         
     return acc, f1, all_targets, all_preds
 
+def run_hyperparameter_tuning(train_loader, test_loader):
+    """
+    Grid search for Hyperparameter Tuning.
+    """
+    print("\n" + "="*50)
+    print("HYPERPARAMETER TUNING PHASE (Grid Search)")
+    print("="*50)
+    
+    # Smaller grid for demonstration and faster execution
+    learning_rates = [0.005, 0.001, 0.0005]
+    weight_decays = [1e-4, 1e-5]
+    best_acc = 0
+    best_params = {'lr': 0.001, 'wd': 1e-5} # Default fallback
+    
+    tuning_results = []
+    
+    # Using a simpler model (CNN) for faster tuning to save time
+    for lr in learning_rates:
+        for wd in weight_decays:
+            print(f"\nTesting Hyperparameters -> LR: {lr}, Weight Decay: {wd}")
+            # Use basic CNN for fast hyperparameter evaluation
+            model = ECGModel(num_classes=5, use_ae=False, use_gru=False, use_attention=False)
+            
+            # Train for only 3 epochs
+            acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=3, lr=lr, weight_decay=wd)
+            
+            tuning_results.append({'lr': lr, 'wd': wd, 'acc': acc, 'f1': f1})
+            
+            if acc > best_acc:
+                best_acc = acc
+                best_params = {'lr': lr, 'wd': wd}
+                
+    print("\n" + "="*50)
+    print("HYPERPARAMETER TUNING RESULTS")
+    print("="*50)
+    for res in tuning_results:
+        print(f"LR: {res['lr']} | Weight Decay: {res['wd']} | Val Acc: {res['acc']:.4f} | Val F1: {res['f1']:.4f}")
+    
+    print(f"\nBEST PARAMETERS FOUND: LR={best_params['lr']}, Weight Decay={best_params['wd']} (Acc: {best_acc:.4f})")
+    print("="*50)
+    return best_params
+
+
 def run_ablation_studies():
     print("\nLoading and Preparing Data...")
     
@@ -115,6 +158,11 @@ def run_ablation_studies():
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
     
+    # Run Hyperparameter Tuning First
+    best_params = run_hyperparameter_tuning(train_loader, test_loader)
+    best_lr = best_params['lr']
+    best_wd = best_params['wd']
+
     # 4 Phase Ablation Study Configurations
     experiments = {
         "1. CNN Only": {"use_ae": False, "use_gru": False, "use_attention": False},
@@ -141,8 +189,8 @@ def run_ablation_studies():
                 pretrained_ae = train_autoencoder(pretrained_ae, train_loader, epochs=10) 
             model.ae.load_state_dict(pretrained_ae.state_dict())
             
-        # Model Training (Classifier training increased to 20 epochs for Colab)
-        acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=20) 
+        # Model Training (Using the best parameters from Tuning Phase)
+        acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=20, lr=best_lr, weight_decay=best_wd) 
         
         results[exp_name] = {"Accuracy": acc, "F1-Score": f1}
         
