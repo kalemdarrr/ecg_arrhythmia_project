@@ -1,0 +1,10 @@
+torch>=2.0.0
+torchvision
+torchaudio
+wfdb
+numpy
+pandas
+scikit-learn
+matplotlib
+tqdm
+imbalanced-learn
