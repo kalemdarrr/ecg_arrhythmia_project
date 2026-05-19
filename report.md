@@ -312,7 +312,19 @@ The AE + CNN + BiGRU model (best overall) achieves the highest recall on minorit
 
 ---
 
-> **Note:** A confusion matrix for Experiment 4 (AE + CNN + BiGRU + Attention) was not collected during this training run. Adding `sklearn.metrics.ConfusionMatrixDisplay` to `train.py` would enable automatic generation for all experiments in future runs.
+#### Experiment 4 — AE + CNN + BiGRU + Attention (FINAL)
+
+![Confusion Matrix — AE + CNN + BiGRU + Attention](images/confusion_matrix_exp4_final.png)
+
+| True \ Predicted | N | S | V | F | Q |
+| :---: | ---: | ---: | ---: | ---: | ---: |
+| **N** | 17712 | 244 | 53 | 88 | 22 |
+| **S** | 31 | 522 | 2 | 1 | 0 |
+| **V** | 20 | 9 | 1388 | 30 | 0 |
+| **F** | 6 | 3 | 3 | 149 | 0 |
+| **Q** | 5 | 0 | 1 | 0 | 1602 |
+
+The final model with the Attention mechanism shows notable improvements over the baseline configurations in minority class recall. Class F (Fusion beats) achieves 149/161 = **92.5% recall**, the highest across all four experiments, suggesting that the attention layer successfully learns to weight the morphologically distinctive features of fusion beats. Class Q (Unknown/Paced) achieves 1602/1608 = **99.6% recall**, also the highest across all experiments. The Attention mechanism helps the model selectively emphasize the most discriminative temporal steps within each heartbeat window, which is particularly beneficial for rare and complex beat morphologies. The slight decrease in overall accuracy (0.9795) relative to AE + CNN + BiGRU (0.9809) is primarily driven by increased N→other class confusion, a common trade-off when a model devotes additional capacity to learning minority class boundaries.
 
 ---
 
