@@ -3,9 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
-from sklearn.metrics import classification_report, accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 import optuna
 import copy
+import os
 from models import ECGModel, DenoisingAutoencoder
 from data_loader import prepare_data
 
@@ -13,11 +16,26 @@ from data_loader import prepare_data
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Device being used: {device}")
 
+def plot_confusion_matrix(targets, preds, exp_name):
+    # Generates and saves a confusion matrix plot for the given predictions.
+    cm = confusion_matrix(targets, preds)
+    class_names = ['N', 'S', 'V', 'F', 'Q']
+    
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel('Predicted Class')
+    plt.ylabel('True Class')
+    plt.title(f'Confusion Matrix - {exp_name}')
+    
+    # Save the plot
+    filename = f"confusion_matrix_{exp_name.replace(' ', '_').replace('+', 'and').replace('.', '')}.png"
+    plt.savefig(filename, bbox_inches='tight')
+    plt.close()
+    print(f"Saved confusion matrix plot to {filename}")
+
 def train_autoencoder(model, train_loader, epochs=5, lr=0.001):
-    """
-    To train only the Autoencoder. 
-    It can be trained on itself (x -> x) and noisy data (x_noisy -> x).
-    """
+    # To train only the Autoencoder. 
+    # It can be trained on itself (x -> x) and noisy data (x_noisy -> x).
     print("--- Autoencoder Pre-training Started ---")
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -47,9 +65,7 @@ def train_autoencoder(model, train_loader, epochs=5, lr=0.001):
     return model
 
 def train_model(model, train_loader, test_loader, epochs=10, lr=0.001, weight_decay=1e-5, patience=3):
-    """
-    Trains the classifier model with Early Stopping mechanism.
-    """
+    # Trains the classifier model with Early Stopping mechanism.
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     
@@ -142,9 +158,9 @@ def run_ablation_studies():
     train_dataset = TensorDataset(X_train_t, y_train_t)
     test_dataset = TensorDataset(X_test_t, y_test_t)
     
-    # Set batch_size to 128 in Colab to increase training speed
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
+    # Set batch_size to 1024 for faster GPU processing
+    train_loader = DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=2, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=1024, shuffle=False, num_workers=2, pin_memory=True)
     
     # 4 Phase Ablation Study Configurations
     experiments = {
@@ -200,8 +216,11 @@ def run_ablation_studies():
             model.ae.load_state_dict(pretrained_ae.state_dict())
             
         # Model Training (20 epochs) with best params and Early Stopping (Patience=4)
-        acc, f1, _, _ = train_model(model, train_loader, test_loader, epochs=20, lr=best_lr, weight_decay=best_wd, patience=4) 
+        acc, f1, targets, preds = train_model(model, train_loader, test_loader, epochs=20, lr=best_lr, weight_decay=best_wd, patience=4) 
         
+        # Generate Confusion Matrix for this experiment
+        plot_confusion_matrix(targets, preds, exp_name)
+
         results[exp_name] = {"Accuracy": acc, "F1-Score": f1}
         
     print("\n\n" + "="*50)
@@ -228,6 +247,7 @@ def run_ablation_studies():
             f.write(f"| **{exp_name.split('.')[0]}** | {exp_name.split('.')[1].strip()} | `{metrics['Accuracy']:.4f}` | `{metrics['F1-Score']:.4f}` |\n")
             
     print("\n[SUCCESS] Results have been automatically saved to training_results.md")
+    print("[SUCCESS] Confusion matrix plots have been generated and saved.")
 
 if __name__ == "__main__":
     run_ablation_studies()
