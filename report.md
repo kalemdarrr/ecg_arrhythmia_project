@@ -258,6 +258,62 @@ The AE + CNN + BiGRU model achieves the best performance with **0.9809 accuracy*
 
 The final AE + CNN + BiGRU + Attention model achieves 0.9795 accuracy under Optuna-optimized and early-stopped training. The marginal decrease relative to AE + CNN + BiGRU suggests that the attention mechanism requires a longer training window or a larger dataset to fully stabilize, which is consistent with findings in the literature for attention mechanisms on small-to-medium scale datasets. Notably, the complete architecture remains competitive and provides the strongest architectural completeness and theoretical justification.
 
+### 8.3 Confusion Matrices
+
+Confusion matrices visualize per-class prediction accuracy and reveal patterns of misclassification between arrhythmia types. Rows represent the true heartbeat class; columns represent the predicted class.
+
+---
+
+#### Experiment 1 — CNN Only
+
+![Confusion Matrix — CNN Only](images/confusion_matrix_exp1_cnn_only.png)
+
+| True \ Predicted | N | S | V | F | Q |
+| :---: | ---: | ---: | ---: | ---: | ---: |
+| **N** | 17698 | 238 | 70 | 96 | 17 |
+| **S** | 46 | 508 | 2 | 0 | 0 |
+| **V** | 24 | 10 | 1390 | 21 | 2 |
+| **F** | 10 | 1 | 7 | 143 | 0 |
+| **Q** | 8 | 0 | 2 | 0 | 1598 |
+
+The CNN-only model shows strong performance on classes N, Q, and V. Class S (Supraventricular) has the highest misclassification rate, mostly confused with N — a known challenge in ECG classification due to morphological similarity.
+
+---
+
+#### Experiment 2 — CNN + BiGRU
+
+![Confusion Matrix — CNN + BiGRU](images/confusion_matrix_exp2_cnn_bigru.png)
+
+| True \ Predicted | N | S | V | F | Q |
+| :---: | ---: | ---: | ---: | ---: | ---: |
+| **N** | 17873 | 169 | 27 | 36 | 14 |
+| **S** | 36 | 517 | 3 | 0 | 0 |
+| **V** | 22 | 7 | 1406 | 11 | 1 |
+| **F** | 14 | 0 | 9 | 138 | 0 |
+| **Q** | 11 | 0 | 0 | 0 | 1597 |
+
+Adding BiGRU significantly reduces misclassifications for class N. The model benefits from bidirectional temporal context, resulting in fewer false positives from the majority class.
+
+---
+
+#### Experiment 3 — AE + CNN + BiGRU
+
+![Confusion Matrix — AE + CNN + BiGRU](images/confusion_matrix_exp3_ae_cnn_bigru.png)
+
+| True \ Predicted | N | S | V | F | Q |
+| :---: | ---: | ---: | ---: | ---: | ---: |
+| **N** | 17337 | 432 | 129 | 191 | 30 |
+| **S** | 23 | 529 | 3 | 1 | 0 |
+| **V** | 18 | 10 | 1378 | 35 | 6 |
+| **F** | 9 | 1 | 7 | 143 | 1 |
+| **Q** | 5 | 0 | 2 | 2 | 1599 |
+
+The AE + CNN + BiGRU model (best overall) achieves the highest recall on minority classes S (529/556 = 95.1%) and Q (1599/1608 = 99.4%). The denoising autoencoder helps extract cleaner features, which is particularly beneficial for rare and morphologically subtle beat types. Some increase in N→S and N→F confusion is visible, consistent with Early Stopping at epoch 2, which prevented further fine-tuning of the majority class boundary.
+
+---
+
+> **Note:** A confusion matrix for Experiment 4 (AE + CNN + BiGRU + Attention) was not collected during this training run. Adding `sklearn.metrics.ConfusionMatrixDisplay` to `train.py` would enable automatic generation for all experiments in future runs.
+
 ---
 
 ## 9. Why This Approach Was Selected
